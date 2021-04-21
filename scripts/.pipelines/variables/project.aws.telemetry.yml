@@ -1,0 +1,4 @@
+variables:
+  vmImageJobCiBuild: 'ubuntu-latest'
+  vmImageJobCiTest: 'ubuntu-latest'
+  artifactName: telemetryStack

@@ -1,0 +1,59 @@
+pr: none
+trigger: none
+
+variables:
+- template: variables/project.aws.prereq.yaml
+
+stages:
+  - stage: BuildArtifact
+    displayName: Build Artifact
+    jobs:
+      - job: CI_build
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - template: templates/ci.aws.build.yaml
+            parameters:
+              artifactName: '$(artifactName)'
+  - stage: CI
+    displayName: CI
+    jobs:
+      - job: Deploy_StackSet_Role_Prereq_to_DevTest
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - template: templates/aws.cli.stackdeploy.yaml
+            parameters:
+              azureConnection: $(azureConnectionName)
+              configKeyVault: $(configKeyVault)
+              stackName: PREREQ
+              AWSRegion: 'us-east-1'
+              cfnTemplate: scaffold/aws-prereq/templates/stackset.prereq.template.yaml
+              AWSAccount: DEVTEST
+              artifactName: $(artifactName)
+  - stage: CD
+    displayName: CD
+    dependsOn: CI
+    condition: and(
+        succeeded(),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    jobs:
+      - deployment: Deploy_StackSet_Role_Prereq_to_Marketplace
+        displayName: Deploy StackSet Role Prereq to Marketplace
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: prod
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: templates/aws.cli.stackdeploy.yaml
+                  parameters:
+                    azureConnection: $(azureConnectionName)
+                    configKeyVault: $(configKeyVault)
+                    stackName: PREREQ
+                    AWSRegion: 'us-east-1'
+                    cfnTemplate: scaffold/aws-prereq/templates/stackset.prereq.template.yaml
+                    AWSAccount: MARKETPLACE
+                    artifactName: $(artifactName)

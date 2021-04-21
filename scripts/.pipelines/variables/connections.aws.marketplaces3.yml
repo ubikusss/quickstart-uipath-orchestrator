@@ -1,0 +1,3 @@
+variables:
+  azureConnectionName: AzureDevTest-EA
+  configKeyVault: cloud-automation-kv

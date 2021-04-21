@@ -1,0 +1,78 @@
+parameters:
+  - name: dependsOn
+    displayName: List of dependencies
+    type: object
+    default: [ ]
+  - name: neededArtifacts
+    type: object
+    default:
+      - 'artifact'
+      - 'infrastructure'
+    displayName: List of required artifacts
+  - name: azureConnection
+    type: string
+    default: ''
+    displayName: Name of Azure connection to use
+  - name: configKeyVault
+    type: string
+    default: ''
+    displayName: Name of Key Vault storing the access credentials
+  - name: artifactName
+    type: string
+    default: ''
+    displayName: Name of build artifact
+  - name: testPath
+    type: string
+    default: ''
+    displayName: The path where taskcat should be run
+
+
+steps:
+  - checkout: none
+  - ${{ each artifact in parameters.NeededArtifacts }}:
+      - download: current
+        artifact: ${{ artifact }}
+        displayName: Download artifact
+
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.8'
+    displayName: 'Use Python 3.8'
+
+  - script: |
+      python -m pip install --upgrade pip
+      pip install taskcat
+    displayName: 'Install dependencies'
+
+  - task: AzureCLI@2
+    displayName: "Environment: add secrets"
+    inputs:
+      azureSubscription: ${{ parameters.AzureConnection }}
+      scriptType: pscore
+      scriptLocation: inlineScript
+      inlineScript: |
+        Write-Output "Retrieving secrets from ${{ parameters.configKeyVault }}"
+        $secretList = (az keyvault secret list --vault-name ${{ parameters.configKeyVault }} | ConvertFrom-Json)
+        $secrets = $secretList | ForEach-Object  { "export $(($_.name -creplace '(?<!^)\p{Lu}', '_$&').ToUpper())=$(((az keyvault secret show --id $($_.id)) | ConvertFrom-Json).value )" }
+        
+        Write-Output "Secrets extracted:"
+        $secretList | ForEach-Object { "$($_.name)" }
+        $secretList = ""
+        
+        if  ($secrets) {
+          $secrets > $(Pipeline.Workspace)/secrets.env
+        }
+        else {
+          Write-Error "No secrets retrieved. Halting execution!"
+          Exit1
+        }
+        
+        Write-Output "Cleaning up secrets..."
+        $secrets = ""
+        Write-Output "All done!"
+
+  - script: |
+      export $(cat $(Pipeline.Workspace)/secrets.env | xargs)
+      taskcat test run
+    workingDirectory: '${{ parameters.testPath }}'
+    displayName: 'Taskcat setup and test'

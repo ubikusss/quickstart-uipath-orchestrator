@@ -1,0 +1,80 @@
+pr:
+  autoCancel: false
+  branches:
+    include:
+    - main
+  paths:
+      include:
+      - scaffold/aws-telemetry/*
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+      include:
+      - scaffold/aws-telemetry/*
+
+variables:
+- template: variables/project.aws.telemetry.yml
+- template: variables/connections.aws.telemetry.yml
+
+stages:
+  - stage: CI
+    displayName: PR validation
+    jobs:
+      - job: CI_build
+        pool:
+          vmImage: $(vmImageJobCiBuild)
+
+        steps:
+
+          - template: templates/ci.aws.build.yaml
+            parameters:
+              artifactName: $(artifactName)
+
+          - template: templates/taskcat.lint.yaml
+            parameters:
+              testPath: '$(Build.SourcesDirectory)/scaffold/aws-telemetry'
+
+      - job: CI_test
+        dependsOn: CI_build
+        timeoutInMinutes: 240
+        pool:
+          vmImage: $(vmImageJobCiTest)
+
+        steps:
+          - template: templates/ci.aws.taskcat.smoke.yaml
+            parameters:
+              neededArtifacts:
+                - '$(artifactName)'
+              azureConnection: $(azureConnectionName)
+              configKeyVault: $(configKeyVault)
+              artifactName: $(artifactName)
+              testPath: $(Pipeline.Workspace)/$(artifactName)/scaffold/aws-telemetry/
+
+  - stage: CD
+    displayName: Publish to marketplace account
+    dependsOn: CI
+    condition: and(
+        succeeded(),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    jobs:
+    - deployment: DeployToMarketplace
+      displayName: Deploy to Marketplace account
+      pool:
+        vmImage: $(vmImageJobCiBuild)
+      environment: prod
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - template: templates/aws.cli.stackdeploy.yaml
+                parameters:
+                  azureConnection: $(azureConnectionName)
+                  configKeyVault: $(configKeyVault)
+                  stackName: TELEMETRY
+                  AWSRegion: 'us-east-2'
+                  cfnTemplate: $(artifactName)/scaffold/aws-telemetry/templates/stackset.yaml
+                  AWSAccount: MARKETPLACE
+                  artifactName: $(artifactName)

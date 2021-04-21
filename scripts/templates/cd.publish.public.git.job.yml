@@ -1,0 +1,172 @@
+parameters:
+  repository: ''
+  neededArtifacts: [ ]
+  artifactName: ''
+  environment: ''
+  dependsOn: [ ]
+  branchName: ''
+  relativeFolderPath: ''
+  gitUserEmail: ''
+  gitUserHandle: ''
+  kvName: ''
+  submodules: [ ]
+
+# execute exclusively on main branch
+
+jobs:
+  - deployment: cd_${{ parameters.environment }}
+    displayName: "Push to remote ${{ parameters.repository }}"
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: ${{ parameters.environment }}
+    dependsOn: ${{ parameters.dependsOn }}
+    variables:
+      key: 'val'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+#            - script: |
+#                if [ $(Build.Reason) == "PullRequest" ]; then
+#                  echo "Executed on pull request from $(System.PullRequest.SourceBranch)"
+#                  exit 1
+#                fi
+#              displayName: "Verify non pull request build reason"
+
+            - script: |
+                sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
+                sudo apt-add-repository https://cli.github.com/packages
+                sudo apt update
+                sudo apt install gh
+                gh --version
+              displayName: 'Install gh'
+
+            - task: AzureCLI@2
+              displayName: "Environment: add secrets"
+              inputs:
+                azureSubscription: "AzureDevTest-EA"
+                scriptType: pscore
+                scriptLocation: inlineScript
+                inlineScript: |
+                  Write-Output "Retrieving secrets from ${{ parameters.kvName }}"
+                  $secretList = (az keyvault secret list --vault-name ${{ parameters.kvName }} | ConvertFrom-Json)
+                  $secrets = $secretList | ForEach-Object  { "export $(($_.name -creplace '(?<!^)\p{Lu}', '_$&').ToUpper())=$(((az keyvault secret show --id $($_.id)) | ConvertFrom-Json).value )" }
+
+                  Write-Output "Secrets extracted:"
+                  $secretList | ForEach-Object { "$($_.name)" }
+                  $secretList = ""
+
+                  if  ($secrets) {
+                    $secrets > $(Pipeline.Workspace)/secrets.env
+                  }
+                  else {
+                    Write-Error "No secrets retrieved. Halting execution!"
+                    Exit1
+                  }
+
+                  Write-Output "Cleaning up secrets..."
+                  $secrets = ""
+                  Write-Output "All done!"
+
+            - script: |
+                export $(cat $(Pipeline.Workspace)/secrets.env | xargs)
+                export TMP_TOKEN=$GITHUB_TOKEN
+                unset GITHUB_TOKEN
+                gh auth login --hostname github.com --with-token <<< $TMP_TOKEN
+                gh auth status 2>&1 | grep "Logged in to github.com" || exit 1
+                git config -l --show-origin
+              workingDirectory: $(Agent.BuildDirectory)
+              displayName: 'gh login'
+
+            # checkout target repository to $(Agent.BuildDirectory)/remote
+            - checkout: ${{ parameters.repository }}
+              submodules: recursive
+              displayName: 'checkout ${{ parameters.repository }}'
+              path: remote
+              persistCredentials: 'true'
+
+            # checkout target repository to $(Agent.BuildDirectory)/self
+            - checkout: self
+              submodules: recursive
+              displayName: 'checkout self'
+              path: self
+              persistCredentials: 'true'
+
+            # download build artifact to $(Pipeline.Workspace)
+            - ${{ each artifact in parameters.neededArtifacts }}:
+                - download: current
+                  artifact: ${{ artifact }}
+                  displayName: Download ${{ artifact }}
+
+            - script: |
+                set -ex
+                git submodule status
+                git status
+                git remote update
+                git fetch
+                set +e
+                git remote set-head origin --auto
+                #identify default branch from remote and check it out
+                default_branch=$(basename "$(git symbolic-ref --short refs/remotes/origin/HEAD)")
+                git checkout $default_branch
+
+                #verify that the target branch exists
+                git rev-parse --verify origin/${{ parameters.branchName }}
+                CHECK_BRANCH=$?
+                set -e
+                if [[  $CHECK_BRANCH -eq 0 ]];then
+                  echo "Branch origin/${{ parameters.branchName }} exists already"
+                fi
+                git checkout -b ${{ parameters.branchName }}
+
+                git config --global user.email ${{ parameters.gitUserEmail }}
+                git config --global user.name ${{ parameters.gitUserHandle }}
+                git status
+              displayName: 'Checkout ${{ parameters.branchName }}'
+              workingDirectory: '$(Agent.BuildDirectory)/remote'
+
+            - script: |
+                set -x
+                rm -rf ./remote/${{ parameters.relativeFolderPath }}
+                cp -r ./${{ parameters.artifactName }} ./remote/${{ parameters.relativeFolderPath }}
+              displayName: 'Apply changes to git repo'
+              workingDirectory: '$(Agent.BuildDirectory)'
+
+            - ${{ each submodule in parameters.submodules }}:
+                - script: |
+                    set -x
+                    cd $(Agent.BuildDirectory)/self
+                    git submodule status
+                    doc_commit_id=$(git submodule status | grep ${{ submodule.sourceName }} | cut -f 2 -d " ")
+                    cd $(Agent.BuildDirectory)/remote
+                    git submodule status
+                    ls ./${{ submodule.targetName }}
+                    git rm --cached -r ./${{ submodule.targetName }} --force
+                    rm -rf ./${{ submodule.targetName }}
+                    git status
+                    git submodule add --force ${{ submodule.repo }} ${{ submodule.targetName }}
+                    git submodule status
+                    cd ${{ submodule.targetName }}
+                    git checkout $doc_commit_id
+                    cd ..
+                    git submodule status
+                    git status
+                  displayName: 'add submodule '
+                  workingDirectory: '$(Agent.BuildDirectory)/remote'
+
+
+            - script: |
+                set -x
+                git add .
+                git commit -a -m "Update"
+                set +e
+                git status | grep "Your branch is up to date"
+                if [ $? -eq 0 ]; then
+                    echo "branch already up to date"
+                    exit 0
+                fi
+                git push origin HEAD:${{ parameters.branchName }} --force
+                gh auth status
+                gh pr view 2>&1 | grep "state:[[:space:]]*OPEN" || gh pr create --title "update submodules" --body "Update submodules"
+              displayName: 'Commit changes'
+              workingDirectory: '$(Agent.BuildDirectory)/remote'

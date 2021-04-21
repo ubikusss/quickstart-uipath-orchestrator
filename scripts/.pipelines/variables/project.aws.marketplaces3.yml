@@ -1,0 +1,4 @@
+variables:
+  artifactName: marketplaces3
+  vmImageJobCiBuild: 'ubuntu-latest'
+  vmImageJobCiTest: 'ubuntu-latest'

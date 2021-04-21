@@ -1,0 +1,21 @@
+parameters:
+  - name: sourcesDir
+    displayName: Path to directory where the git repository
+  - name: mode
+    displayName: Keep or delete git structure
+    type: string
+    values:
+      - keep
+      - delete
+
+steps:
+  - ${{ if eq(parameters.mode, 'delete') }}:
+      - script: |
+          ls -1a | grep -E "(^\.git$|^\.gitignore$|^\.gitmodules$|^\.gitattributes$)" | xargs rm -rf
+        displayName: 'Sanitize git repository, mode=delete'
+        workingDirectory: ${{ parameters.sourcesDir }}
+  - ${{ if eq(parameters.mode, 'keep') }}:
+      - script: |
+          ls -1a | grep -Ev "(^\.git$|^\.$|^\.\.$|^\.gitignore$|^\.gitmodules$|^\.gitattributes$)" | xargs rm -rf
+        displayName: 'Sanitize git repository, mode=keep'
+        workingDirectory: ${{ parameters.sourcesDir }}
