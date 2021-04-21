@@ -1,5 +1,0 @@
-variables:
-  gitUserEmail: 'github-cloudinfra-serviceuser@outlook.com'
-  gitUserHandle: 'ReposUpdateBot'
-  upstreamTargetBranch: 'develop'
-  kvName: 'cloud-automation-kv'
