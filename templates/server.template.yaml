@@ -371,10 +371,10 @@ Resources:
               - logs:DescribeLogGroups
               - logs:CreateLogStream
               - logs:CreateLogGroup
-            Resource: !Sub |
-              - arn:${AWS::Partition}:logs:*:*:*
-              - arn:${AWS::Partition}:cloudwatch:*:*:*
-              - arn:${AWS::Partition}:ec2:*:*:*
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:*:*:*
+              - !Sub arn:${AWS::Partition}:cloudwatch:*:*:*
+              - !Sub arn:${AWS::Partition}:ec2:*:*:*
             Effect: Allow
       PolicyName: CloudwatchLogsAccess
       Roles:
@@ -825,10 +825,6 @@ Resources:
     Type: 'AWS::EC2::Instance'
     Properties:
       ImageId: !Ref HostInstanceAMI
-      BlockDeviceMappings:
-        - DeviceName: !GetAtt HostInstanceAMI.RootDeviceName
-          Ebs:
-            Encrypted: true
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyPairName
       NetworkInterfaces:
